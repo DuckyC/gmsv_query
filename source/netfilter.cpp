@@ -136,10 +136,10 @@ namespace netfilter
 	
 	struct player_t
 	{
-		int32_t index;
+		byte index;
 		std::string name;
-		int32_t score;
-		int32_t time;
+		double score;
+		double time;
 
 	};
 
@@ -148,7 +148,7 @@ namespace netfilter
 		bool dontsend;
 		bool senddefault;
 
-		int32_t count;
+		byte count;
 		std::vector<player_t> players;
 	};
 
@@ -391,7 +391,7 @@ namespace netfilter
 		}
 
 		lua->PushString(hook);
-		lua->PushNumber(from.sin_addr.S_un.S_addr);
+		lua->PushString(inet_ntoa(from.sin_addr));
 		lua->PushNumber(27015);
 
 		lua->CreateTable();
@@ -579,16 +579,15 @@ namespace netfilter
 
 		player_cache_packet.WriteLong(-1); // connectionless packet header
 		player_cache_packet.WriteByte('D'); // packet type is always 'I'
-		player_cache_packet.WriteByte(r_player.count);
 
+		player_cache_packet.WriteByte(r_player.count);
 		for (int i = 0; i < r_player.count; i++)
 		{
 			player_t player = r_player.players[i];
-			player_cache_packet.WriteByte(player.index);
+			player_cache_packet.WriteByte(i);
 			player_cache_packet.WriteString(player.name.c_str());
 			player_cache_packet.WriteLong(player.score);
 			player_cache_packet.WriteFloat(player.time);
-			DebugWarning("sending: name %s score %i time %i\n", player.name.c_str(), player.score, player.time);
 		}
 
 	}
@@ -620,7 +619,7 @@ namespace netfilter
 		}
 
 		lua->PushString(hook);
-		lua->PushNumber(from.sin_addr.S_un.S_addr);
+		lua->PushString(inet_ntoa(from.sin_addr));
 		lua->PushNumber(27015);
 
 		if (lua->PCall(3, 1, 0) != 0)
@@ -642,7 +641,6 @@ namespace netfilter
 			newreply.count = count;
 			
 			std::vector<player_t> newPlayers(count);
-			newreply.players = newPlayers;
 
 			for (int i = 0; i < count; i++)
 			{
@@ -668,6 +666,7 @@ namespace netfilter
 				newPlayers.at(i) = newPlayer;
 			}
 
+			newreply.players = newPlayers;
 		}
 
 		lua->Pop(1);
@@ -683,7 +682,7 @@ namespace netfilter
 			return PacketTypeGood;
 
 		if (player.dontsend)
-			return PacketTypeInvalid; // dont send it
+			return PacketTypeInvalid; // dont senkd it
 
 		BuildReplyPlayerPacket(player);
 
@@ -695,7 +694,7 @@ namespace netfilter
 			reinterpret_cast<const sockaddr *>(&from),
 			sizeof(from)
 			);
-
+		//DebugWarning("uhhh: ", );
 		return PacketTypeInvalid; // we've handled it
 	}
 
@@ -729,12 +728,17 @@ namespace netfilter
 		if (channel != -1)
 			return PacketTypeGood;
 
+		int challenge = *reinterpret_cast<const int *>(data + 5);
+		if (challenge == -1)
+			return PacketTypeGood; // default challenge response
+
 		uint8_t type = *reinterpret_cast<const uint8_t *>(data + 4);
-		
 		if (type == 'T')
 			return PacketTypeInfo;
 		if (type == 'U')
 			return PacketTypePlayer;
+		if (type == 'W')
+			return PacketTypeGood;// default challenge response
 
 		return PacketTypeGood;
 	}
@@ -771,7 +775,6 @@ namespace netfilter
 			return -1;
 
 		PacketType type = ClassifyPacket(buf, len, infrom);
-
 		if (type == PacketTypeInfo)
 			type = HandleInfoQuery(infrom);
 
