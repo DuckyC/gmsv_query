@@ -26,6 +26,7 @@
 
 #include <winsock2.h>
 #include <unordered_set>
+#define strtoll _strtoi64
 
 typedef std::unordered_set<uint32_t> set_uint32;
 
@@ -524,7 +525,7 @@ namespace netfilter
 			lua->Pop(1);
 
 			lua->GetField(-1, "steamid");
-			newreply.steamid = _strtoui64(lua->GetString(-1), 0, 10);
+			newreply.steamid = strtoll(lua->GetString(-1), 0, 10);
 			lua->Pop(1);
 
 			lua->GetField(-1, "tags");
