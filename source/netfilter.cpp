@@ -1,4 +1,4 @@
-#include <netfilter.hpp>
+#include <netfilter_old.hpp>
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
 #include <stdint.h>
@@ -25,9 +25,6 @@
 #if defined _WIN32
 
 #include <winsock2.h>
-#include <unordered_set>
-
-typedef std::unordered_set<uint32_t> set_uint32;
 
 #elif defined __linux
 
@@ -36,9 +33,6 @@ typedef std::unordered_set<uint32_t> set_uint32;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#include <unordered_set>
-
-typedef std::unordered_set<uint32_t> set_uint32;
 
 #elif defined __APPLE__
 
@@ -47,8 +41,6 @@ typedef std::unordered_set<uint32_t> set_uint32;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
-
-typedef std::set<uint32_t> set_uint32;
 
 #endif
 
@@ -64,17 +56,6 @@ namespace netfilter
 		int32_t *fromlen
 		);
 
-	struct packet_t
-	{
-		packet_t() :
-			address_size(sizeof(address))
-		{ }
-
-		sockaddr_in address;
-		int32_t address_size;
-		std::vector<char> buffer;
-	};
-
 	struct netsocket_t
 	{
 		int32_t nPort;
@@ -85,55 +66,56 @@ namespace netfilter
 
 	struct reply_info_t
 	{
-		bool dontsend;
+		bool defaultGameName;
+		std::string gameName;
 
-		std::string game_name;
-		std::string map_name;
-		std::string game_dir;
-		std::string gamemode_name;
-		int32_t amt_clients;
-		int32_t max_clients;
-		int32_t amt_bots;
-		char server_type;
-		char os_type;
+		bool defaultMapName;
+		std::string mapName;
+
+		bool defaultGameDir;
+		std::string gameDir;
+
+		bool defaultGamemodeName;
+		std::string gamemodeName;
+
+		bool defaultAmtClients;
+		int32_t amtClients;
+
+		bool defaultMaxClients;
+		int32_t maxClients;
+
+		bool defaultAmtBots;
+		int32_t amtBots;
+
+		bool defaultServerType;
+		char serverType;
+
+		bool defaultOSType;
+		char OSType;
+
+		bool defaultPassworded;
 		bool passworded;
+
+		bool defaultSecure;
 		bool secure;
-		std::string game_version;
-		int32_t udp_port;
+
+		bool defaultGameVersion;
+		std::string gameVersion;
+
+		bool defaultUDPPort;
+		int32_t UDPPort;
+
+		bool defaultTags;
 		std::string tags;
-		int appid;
+
+		bool defaultAppid;
+		int32_t appid;
+
+		bool defaultSteamid;
 		uint64_t steamid;
 	};
 
-	struct gamemode_t
-	{
-		bool _unk1;
-		bool _unk2;
-		uint16_t _pad;
-		std::string name;
-		std::string path;
-		std::string filters;
-		std::string base;
-		std::string workshopid;
-	};
 
-	struct query_client_t
-	{
-		bool operator<(const query_client_t &rhs) const
-		{
-			return address < rhs.address;
-		}
-
-		bool operator==(const query_client_t &rhs) const
-		{
-			return address == rhs.address;
-		}
-
-		uint32_t address;
-		uint32_t last_reset;
-		uint32_t count;
-	};
-	
 	struct player_t
 	{
 		byte index;
@@ -145,22 +127,31 @@ namespace netfilter
 
 	struct reply_player_t
 	{
-		bool dontsend;
-		bool senddefault;
-
+		bool sendDefault;
 		byte count;
 		std::vector<player_t> players;
 	};
 
 	enum PacketType
 	{
-		PacketTypeInvalid = -1,
+		PacketTypeIgnore = -1,
 		PacketTypeGood,
 		PacketTypeInfo,
 		PacketTypePlayer,
+		PacketTypeFake,
+	};
+
+	enum HookReply {
+		HookReplyIgnore,
+		HookReplyDefault,
+		HookReplyFake,
 	};
 
 	typedef CUtlVector<netsocket_t> netsockets_t;
+
+	static char hook_name[] = "A2S_REQUEST";
+	static const char *default_game_version = "16.02.26";
+	static const uint8_t default_proto_version = 17;
 
 #if defined _WIN32
 
@@ -218,15 +209,18 @@ namespace netfilter
 	static Hook_recvfrom_t Hook_recvfrom = VCRHook_recvfrom;
 	static int32_t game_socket = -1;
 
-	static const char *default_game_version = "16.02.26";
-	static const uint8_t default_proto_version = 17;
-	static bool info_cache_enabled = true;
-	static reply_info_t reply_info;
+	static bool info_detour_enabled = false;
+	static bool player_detour_enabled = false;
+	static double info_max_requests = 60;
+	static double player_max_requests = 60;
+
+	static bool info_packet_old = false;
+	static reply_info_t reply_info_fake;
+	static reply_info_t reply_info_real;
 	static char info_cache_buffer[1024] = { 0 };
 	static bf_write info_cache_packet(info_cache_buffer, sizeof(info_cache_buffer));
-	static uint32_t info_cache_last_update = 0;
-	static uint32_t info_cache_time = 5;
 
+	static bool player_packet_old = false;
 	static reply_player_t reply_player;
 	static char player_cache_buffer[1024] = { 0 };
 	static bf_write player_cache_packet(player_cache_buffer, sizeof(player_cache_buffer));
@@ -241,41 +235,50 @@ namespace netfilter
 
 	static void BuildStaticReplyInfo()
 	{
-		reply_info.gamemode_name = gamedll->GetGameDescription();
+		reply_info_real.defaultGameName = true;
+		reply_info_real.defaultMapName = true;
+		reply_info_real.defaultGameDir = true;
+		reply_info_real.defaultGamemodeName = true;
+		reply_info_real.defaultAmtClients = true;
+		reply_info_real.defaultMaxClients = true;
+		reply_info_real.defaultAmtBots = true;
+		reply_info_real.defaultServerType = true;
+		reply_info_real.defaultOSType = true;
+		reply_info_real.defaultPassworded = true;
+		reply_info_real.defaultSecure = true;
+		reply_info_real.defaultGameVersion = true;
+		reply_info_real.defaultUDPPort = true;
+		reply_info_real.defaultTags = true;
+		reply_info_real.defaultAppid = true;
+		reply_info_real.defaultSteamid = true;
 
 		{
-			reply_info.game_dir.resize(256);
-			engine_server->GetGameDir(&reply_info.game_dir[0], reply_info.game_dir.size());
-			reply_info.game_dir.resize(strlen(reply_info.game_dir.c_str()));
+			reply_info_real.gameDir.resize(256);
+			engine_server->GetGameDir(&reply_info_real.gameDir[0], reply_info_real.gameDir.size());
+			reply_info_real.gameDir.resize(strlen(reply_info_real.gameDir.c_str()));
 
-			size_t pos = reply_info.game_dir.find_last_of("\\/");
-			if (pos != reply_info.game_dir.npos)
-				reply_info.game_dir.erase(0, pos + 1);
+			size_t pos = reply_info_real.gameDir.find_last_of("\\/");
+			if (pos != reply_info_real.gameDir.npos)
+				reply_info_real.gameDir.erase(0, pos + 1);
 		}
-
-		reply_info.max_clients = server->GetMaxClients();
-
-		reply_info.udp_port = server->GetUDPPort();
-
 		{
 			const IGamemodeSystem::Information &gamemode =
 				static_cast<CFileSystem_Stdio *>(filesystem)->Gamemodes()->Active();
 
-			reply_info.tags = " gm:";
-			reply_info.tags += gamemode.name;
+			reply_info_real.tags = " gm:";
+			reply_info_real.tags += gamemode.name;
 
 			if (!gamemode.workshopid.empty())
 			{
-				reply_info.tags += " gmws:";
-				reply_info.tags += gamemode.workshopid;
+				reply_info_real.tags += " gmws:";
+				reply_info_real.tags += gamemode.workshopid;
 			}
 		}
-
 		{
 			FileHandle_t file = filesystem->Open("steam.inf", "r", "GAME");
 			if (file == nullptr)
 			{
-				reply_info.game_version = default_game_version;
+				reply_info_real.gameVersion = default_game_version;
 				DebugWarning("[Query] Error opening steam.inf\n");
 				return;
 			}
@@ -285,41 +288,47 @@ namespace netfilter
 			filesystem->Close(file);
 			if (failed)
 			{
-				reply_info.game_version = default_game_version;
+				reply_info_real.gameVersion = default_game_version;
 				DebugWarning("[Query] Failed reading steam.inf\n");
 				return;
 			}
 
-			reply_info.game_version = &buff[13];
+			reply_info_real.gameVersion = &buff[13];
 
-			size_t pos = reply_info.game_version.find_first_of("\r\n");
-			if (pos != reply_info.game_version.npos)
-				reply_info.game_version.erase(pos);
+			size_t pos = reply_info_real.gameVersion.find_first_of("\r\n");
+			if (pos != reply_info_real.gameVersion.npos)
+				reply_info_real.gameVersion.erase(pos);
 		}
 
-		reply_info.os_type = operating_system_char;
-		reply_info.server_type = 'd';
+		reply_info_real.gamemodeName = gamedll->GetGameDescription();
+		reply_info_real.maxClients = server->GetMaxClients();
+		reply_info_real.UDPPort = server->GetUDPPort();
+		reply_info_real.OSType = operating_system_char;
+		reply_info_real.serverType = 'd';
+		info_packet_old = true;
 	}
 
-	static void UpdateReplyInfo()
+	static void BuildDynamicReplyInfo()
 	{
-		reply_info.game_name = server->GetName();
-		reply_info.map_name = server->GetMapName();
-		reply_info.appid = engine_server->GetAppID();
-		reply_info.amt_clients = server->GetNumClients();
-		reply_info.amt_bots = server->GetNumFakeClients();
-		reply_info.passworded = server->GetPassword() != nullptr ? 1 : 0;
-		reply_info.secure = SteamGameServer_BSecure();
+		reply_info_real.gameName = server->GetName();
+		reply_info_real.mapName = server->GetMapName();
+		reply_info_real.amtClients = server->GetNumClients();
+		reply_info_real.amtBots = server->GetNumFakeClients();
+		reply_info_real.passworded = server->GetPassword() != nullptr ? 1 : 0;
+		reply_info_real.secure = SteamGameServer_BSecure();
+		reply_info_real.appid = engine_server->GetAppID();
 
 		const CSteamID *sid = engine_server->GetGameServerSteamID();
+		uint64_t steamid = 0;
 		if (sid != nullptr)
-			reply_info.steamid = sid->ConvertToUint64();
+			steamid = sid->ConvertToUint64();
+
+		reply_info_real.steamid = steamid;
+
+		info_packet_old = true;
 	}
 
-	// maybe divide into low priority and high priority data?
-	// low priority would be VAC protection status for example
-	// updated on a much bigger period
-	static void BuildReplyInfoPacket(reply_info_t info)
+	static void BuildInfoPacket()
 	{
 		info_cache_packet.Reset();
 
@@ -327,33 +336,33 @@ namespace netfilter
 		info_cache_packet.WriteByte('I'); // packet type is always 'I'
 		info_cache_packet.WriteByte(default_proto_version);
 
-		info_cache_packet.WriteString(info.game_name.c_str());
-		info_cache_packet.WriteString(info.map_name.c_str());
-		info_cache_packet.WriteString(info.game_dir.c_str());
-		info_cache_packet.WriteString(info.gamemode_name.c_str());
+		info_cache_packet.WriteString(reply_info_real.defaultGameName ? reply_info_real.gameName.c_str() : reply_info_fake.gameName.c_str());
+		info_cache_packet.WriteString(reply_info_real.defaultMapName ? reply_info_real.mapName.c_str() : reply_info_fake.mapName.c_str());
+		info_cache_packet.WriteString(reply_info_real.defaultGameDir ? reply_info_real.gameDir.c_str() : reply_info_fake.gameDir.c_str());
+		info_cache_packet.WriteString(reply_info_real.defaultGamemodeName ? reply_info_real.gamemodeName.c_str() : reply_info_fake.gamemodeName.c_str());
 
-		info_cache_packet.WriteShort(info.appid);
+		info_cache_packet.WriteShort(reply_info_real.defaultAppid ? reply_info_real.appid : reply_info_fake.appid);
 
-		info_cache_packet.WriteByte(info.amt_clients);
-		info_cache_packet.WriteByte(info.max_clients);
-		info_cache_packet.WriteByte(info.amt_bots);
-		info_cache_packet.WriteByte(info.server_type);
-		info_cache_packet.WriteByte(info.os_type);
-		info_cache_packet.WriteByte(info.passworded);
+		info_cache_packet.WriteByte(reply_info_real.defaultAmtClients ? reply_info_real.amtClients : reply_info_fake.amtClients);
+		info_cache_packet.WriteByte(reply_info_real.defaultMaxClients ? reply_info_real.maxClients : reply_info_fake.maxClients);
+		info_cache_packet.WriteByte(reply_info_real.defaultAmtBots ? reply_info_real.amtBots : reply_info_fake.amtBots);
+		info_cache_packet.WriteByte(reply_info_real.defaultServerType ? reply_info_real.serverType : reply_info_fake.serverType);
+		info_cache_packet.WriteByte(reply_info_real.defaultOSType ? reply_info_real.OSType : reply_info_fake.OSType);
+		info_cache_packet.WriteByte(reply_info_real.defaultPassworded ? reply_info_real.passworded : reply_info_fake.passworded);
 
 		// if vac protected, it activates itself some time after startup
-		info_cache_packet.WriteByte(info.secure);
-		info_cache_packet.WriteString(info.game_version.c_str());
+		info_cache_packet.WriteByte(reply_info_real.defaultSecure ? reply_info_real.secure : reply_info_fake.secure);
+		info_cache_packet.WriteString(reply_info_real.defaultGameVersion ? reply_info_real.gameVersion.c_str() : reply_info_fake.gameVersion.c_str());
 
-		if (info.tags.empty())
+		if (reply_info_real.tags.empty())
 		{
 			// 0x80 - port number is present
 			// 0x10 - server steamid is present
 			// 0x01 - game long appid is present
 			info_cache_packet.WriteByte(0x80 | 0x10 | 0x01);
-			info_cache_packet.WriteShort(info.udp_port);
-			info_cache_packet.WriteLongLong(info.steamid);
-			info_cache_packet.WriteLongLong(info.appid);
+			info_cache_packet.WriteShort(reply_info_real.defaultUDPPort ? reply_info_real.UDPPort : reply_info_fake.UDPPort);
+			info_cache_packet.WriteLongLong(reply_info_real.defaultSteamid ? reply_info_real.steamid : reply_info_fake.steamid);
+			info_cache_packet.WriteLongLong(reply_info_real.defaultAppid ? reply_info_real.appid : reply_info_fake.appid);
 		}
 		else
 		{
@@ -362,219 +371,17 @@ namespace netfilter
 			// 0x20 - tags are present
 			// 0x01 - game long appid is present
 			info_cache_packet.WriteByte(0x80 | 0x10 | 0x20 | 0x01);
-			info_cache_packet.WriteShort(info.udp_port);
-			info_cache_packet.WriteLongLong(info.steamid);
-			info_cache_packet.WriteString(info.tags.c_str());
-			info_cache_packet.WriteLongLong(info.appid);
+			info_cache_packet.WriteShort(reply_info_real.defaultUDPPort ? reply_info_real.UDPPort : reply_info_fake.UDPPort);
+			info_cache_packet.WriteLongLong(reply_info_real.defaultSteamid ? reply_info_real.steamid : reply_info_fake.steamid);
+			info_cache_packet.WriteString(reply_info_real.defaultTags ? reply_info_real.tags.c_str() : reply_info_fake.tags.c_str());
+			info_cache_packet.WriteLongLong(reply_info_real.defaultAppid ? reply_info_real.appid : reply_info_fake.appid);
 		}
+		info_packet_old = false;
 	}
 
-	reply_info_t CallInfoHook(const sockaddr_in &from)
+	static void BuildPlayerPacket()
 	{
-		char hook[] = "A2S_INFO";
-
-		lua->GetField(GarrysMod::Lua::INDEX_GLOBAL, "hook");
-		if (!lua->IsType(-1, GarrysMod::Lua::Type::TABLE))
-		{
-			lua->ErrorNoHalt("[%s] Global hook is not a table!\n", hook);
-			lua->Pop(2);
-			return reply_info;
-		}
-
-		lua->GetField(-1, "Run");
-		lua->Remove(-2);
-		if (!lua->IsType(-1, GarrysMod::Lua::Type::FUNCTION))
-		{
-			lua->ErrorNoHalt("[%s] Global hook.Run is not a function!\n", hook);
-			lua->Pop(2);
-			return reply_info;
-		}
-
-		lua->PushString(hook);
-		lua->PushString(inet_ntoa(from.sin_addr));
-		lua->PushNumber(27015);
-
-		lua->CreateTable();
-
-		lua->PushString(reply_info.game_name.c_str());
-		lua->SetField(-2, "name");
-
-		lua->PushString(reply_info.map_name.c_str());
-		lua->SetField(-2, "map");
-
-		lua->PushString(reply_info.game_dir.c_str());
-		lua->SetField(-2, "folder");
-
-		lua->PushString(reply_info.gamemode_name.c_str());
-		lua->SetField(-2, "gamemode");
-
-		lua->PushNumber(reply_info.amt_clients);
-		lua->SetField(-2, "players");
-
-		lua->PushNumber(reply_info.max_clients);
-		lua->SetField(-2, "maxplayers");
-
-		lua->PushNumber(reply_info.amt_bots);
-		lua->SetField(-2, "bots");
-
-		lua->PushString(&reply_info.server_type);
-		lua->SetField(-2, "servertype");
-
-		lua->PushString(&reply_info.os_type);
-		lua->SetField(-2, "os");
-
-		lua->PushBool(reply_info.passworded);
-		lua->SetField(-2, "passworded");
-
-		lua->PushBool(reply_info.secure);
-		lua->SetField(-2, "VAC");
-
-		lua->PushNumber(reply_info.udp_port);
-		lua->SetField(-2, "gameport");
-
-		std::string steamid = std::to_string(reply_info.steamid);
-		lua->PushString(steamid.c_str());
-		lua->SetField(-2, "steamid");
-
-		lua->PushString(reply_info.tags.c_str());
-		lua->SetField(-2, "tags");
-
-		if (lua->PCall(4, 1, 0) != 0)
-			lua->ErrorNoHalt("\n[%s] %s\n\n", hook, lua->GetString(-1));
-
-		reply_info_t newreply;
-		newreply.dontsend = false;
-
-		newreply.game_name = reply_info.game_name;
-		newreply.map_name = reply_info.map_name;
-		newreply.game_dir = reply_info.game_dir;
-		newreply.gamemode_name = reply_info.gamemode_name;
-		newreply.amt_clients = reply_info.amt_clients;
-		newreply.max_clients = reply_info.max_clients;
-		newreply.amt_bots = reply_info.amt_bots;
-		newreply.server_type = reply_info.server_type;
-		newreply.os_type = reply_info.os_type;
-		newreply.passworded = reply_info.passworded;
-		newreply.secure = reply_info.secure;
-		newreply.game_version = reply_info.game_version;
-		newreply.udp_port = reply_info.udp_port;
-		newreply.tags = reply_info.tags;
-		newreply.appid = reply_info.appid;
-		newreply.steamid = reply_info.steamid;
-
-		if (lua->IsType(-1, GarrysMod::Lua::Type::BOOL))
-		{
-			if (lua->GetBool(-1))
-			{
-				newreply = reply_info; // return default when return true
-			}
-			else
-			{
-				newreply.dontsend = true; // dont send when return false
-			}
-		}
-		else if (lua->IsType(-1, GarrysMod::Lua::Type::TABLE))
-		{
-			lua->GetField(-1, "name");
-			newreply.game_name = lua->GetString(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "map");
-			newreply.map_name = lua->GetString(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "folder");
-			newreply.game_dir = lua->GetString(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "gamemode");
-			newreply.gamemode_name = lua->GetString(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "players");
-			newreply.amt_clients = lua->GetNumber(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "maxplayers");
-			newreply.max_clients = lua->GetNumber(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "bots");
-			newreply.amt_bots = lua->GetNumber(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "servertype");
-			newreply.server_type = lua->GetString(-1)[0]; //make into char
-			lua->Pop(1);
-
-			lua->GetField(-1, "os");
-			newreply.os_type = lua->GetString(-1)[0];
-			lua->Pop(1);
-
-			lua->GetField(-1, "passworded");
-			newreply.passworded = lua->GetBool(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "VAC");
-			newreply.secure = lua->GetBool(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "gameport");
-			newreply.udp_port = lua->GetNumber(-1);
-			lua->Pop(1);
-
-			lua->GetField(-1, "steamid");
-			newreply.steamid = _strtoui64(lua->GetString(-1), 0, 10);
-			lua->Pop(1);
-
-			lua->GetField(-1, "tags");
-			newreply.tags = lua->GetString(-1);
-			lua->Pop(1);
-		}
-
-		lua->Pop(1);
-
-		return newreply;
-	}
-
-	inline PacketType SendInfoCache(const sockaddr_in &from, uint32_t time)
-	{
-		//if (time - info_cache_last_update >= info_cache_time)
-		{
-			UpdateReplyInfo();
-			info_cache_last_update = time;
-		}
-
-		reply_info_t info = CallInfoHook(from);
-		if (info.dontsend)
-			return PacketTypeInvalid; // dont send it
-
-		BuildReplyInfoPacket(info);
-
-		sendto(
-			game_socket,
-			reinterpret_cast<char *>(info_cache_packet.GetData()),
-			info_cache_packet.GetNumBytesWritten(),
-			0,
-			reinterpret_cast<const sockaddr *>(&from),
-			sizeof(from)
-			);
-
-		return PacketTypeInvalid; // we've handled it
-	}
-
-	static PacketType HandleInfoQuery(const sockaddr_in &from)
-	{
-		uint32_t time = static_cast<uint32_t>(globalvars->realtime);
-
-		if (info_cache_enabled)
-			return SendInfoCache(from, time);
-
-		return PacketTypeGood;
-	}
-
-	static void BuildReplyPlayerPacket(reply_player_t r_player)
-	{
+		reply_player_t r_player = reply_player;
 		player_cache_packet.Reset();
 
 		player_cache_packet.WriteLong(-1); // connectionless packet header
@@ -589,102 +396,91 @@ namespace netfilter
 			player_cache_packet.WriteLong(player.score);
 			player_cache_packet.WriteFloat(player.time);
 		}
-
+		player_packet_old = false;
 	}
 
-	static reply_player_t CallPlayerHook(const sockaddr_in &from)
+	PacketType CallRequestHook(const sockaddr_in &from, PacketType type)
 	{
-		reply_player_t newreply;
-		newreply.dontsend = false;
-		newreply.senddefault = true;
-
-
-		char hook[] = "A2S_PLAYER";
-
 		lua->GetField(GarrysMod::Lua::INDEX_GLOBAL, "hook");
 		if (!lua->IsType(-1, GarrysMod::Lua::Type::TABLE))
 		{
-			lua->ErrorNoHalt("[%s] Global hook is not a table!\n", hook);
+			lua->ErrorNoHalt("[QUERY] Global hook is not a table!\n");
 			lua->Pop(2);
-			return newreply;
+			return PacketTypeGood;
 		}
 
 		lua->GetField(-1, "Run");
 		lua->Remove(-2);
 		if (!lua->IsType(-1, GarrysMod::Lua::Type::FUNCTION))
 		{
-			lua->ErrorNoHalt("[%s] Global hook.Run is not a function!\n", hook);
+			lua->ErrorNoHalt("[QUERY] Global hook.Run is not a function!\n");
 			lua->Pop(2);
-			return newreply;
+			return PacketTypeGood;
 		}
 
-		lua->PushString(hook);
+		lua->PushString(hook_name);
 		lua->PushString(inet_ntoa(from.sin_addr));
 		lua->PushNumber(27015);
+		lua->PushNumber(type);
 
-		if (lua->PCall(3, 1, 0) != 0)
-			lua->ErrorNoHalt("\n[%s] %s\n\n", hook, lua->GetString(-1));
+		if (lua->PCall(4, 1, 0) != 0)
+			lua->ErrorNoHalt("\n[QUERY] %s : %s\n\n", hook_name, lua->GetString(-1));
+
+		if (lua->IsType(-1, GarrysMod::Lua::Type::NUMBER))
+		{
+			double reply_type = lua->GetNumber(-1);
+			lua->Pop(1);
+			if (reply_type == HookReplyIgnore)
+				return PacketTypeIgnore;
+			if (reply_type == HookReplyDefault)
+				return PacketTypeGood;
+			if (reply_type == HookReplyFake)
+				return PacketTypeFake;
+
+			return PacketTypeGood;
+		}
 		
-		if (lua->IsType(-1, GarrysMod::Lua::Type::BOOL))
-		{
-			if (!lua->GetBool(-1))
-			{
-				newreply.senddefault = false;
-				newreply.dontsend = true; // dont send when return false
-			}
-		}
-		else if (lua->IsType(-1, GarrysMod::Lua::Type::TABLE))
-		{
-			newreply.senddefault = false;
-
-			int count = lua->ObjLen(-1);
-			newreply.count = count;
-			
-			std::vector<player_t> newPlayers(count);
-
-			for (int i = 0; i < count; i++)
-			{
-				player_t newPlayer;
-				newPlayer.index = i;
-
-				lua->PushNumber(i+1);
-				lua->GetTable(-2);
-
-				lua->GetField(-1, "name");
-				newPlayer.name = lua->GetString(-1);
-				lua->Pop(1);
-
-				lua->GetField(-1, "score");
-				newPlayer.score = lua->GetNumber(-1);
-				lua->Pop(1);
-
-				lua->GetField(-1, "time");
-				newPlayer.time = lua->GetNumber(-1);
-				lua->Pop(1);				
-
-				lua->Pop(1);
-				newPlayers.at(i) = newPlayer;
-			}
-
-			newreply.players = newPlayers;
-		}
-
 		lua->Pop(1);
+		return PacketTypeGood;
+	}
 
-		return newreply;
+	static PacketType HandleInfoQuery(const sockaddr_in &from)
+	{
+		//TODO: DO TIMER
+		PacketType type = CallRequestHook(from, PacketTypeInfo);
+		if (type != PacketTypeFake)
+			return type;
+
+		BuildDynamicReplyInfo(); // update on timer
+
+		if (info_packet_old)
+			BuildInfoPacket();
+
+		sendto(
+			game_socket,
+			reinterpret_cast<char *>(info_cache_packet.GetData()),
+			info_cache_packet.GetNumBytesWritten(),
+			0,
+			reinterpret_cast<const sockaddr *>(&from),
+			sizeof(from)
+			);
+
+		return PacketTypeIgnore; // we've handled it
 	}
 
 	static PacketType HandlePlayerQuery(const sockaddr_in &from)
 	{
-		reply_player_t player = CallPlayerHook(from);
+		//TODO: DO TIMER
 
-		if (player.senddefault)
+		PacketType type = CallRequestHook(from, PacketTypePlayer);
+		if (type != PacketTypeFake)
+			return type;
+
+		if (reply_player.sendDefault)
 			return PacketTypeGood;
 
-		if (player.dontsend)
-			return PacketTypeInvalid; // dont senkd it
-
-		BuildReplyPlayerPacket(player);
+		if (player_packet_old)
+			BuildPlayerPacket();
 
 		sendto(
 			game_socket,
@@ -694,8 +490,8 @@ namespace netfilter
 			reinterpret_cast<const sockaddr *>(&from),
 			sizeof(from)
 			);
-		//DebugWarning("uhhh: ", );
-		return PacketTypeInvalid; // we've handled it
+
+		return PacketTypeIgnore; // we've handled it
 	}
 
 	static PacketType ClassifyPacket(const char *data, int32_t len, const sockaddr_in &from)
@@ -707,7 +503,7 @@ namespace netfilter
 				len,
 				inet_ntoa(from.sin_addr)
 				);
-			return PacketTypeInvalid;
+			return PacketTypeIgnore;
 		}
 
 		if (len < 5)
@@ -722,7 +518,7 @@ namespace netfilter
 				channel,
 				inet_ntoa(from.sin_addr)
 				);
-			return PacketTypeInvalid;
+			return PacketTypeIgnore;
 		}
 
 		if (channel != -1)
@@ -737,10 +533,28 @@ namespace netfilter
 			return PacketTypeInfo;
 		if (type == 'U')
 			return PacketTypePlayer;
-		if (type == 'W')
-			return PacketTypeGood;// default challenge response
 
 		return PacketTypeGood;
+	}
+
+	inline int32_t ReceiveAndAnalyzePacket(int32_t s, char *buf, int32_t buflen, int32_t flags, sockaddr *from, int32_t *fromlen)
+	{
+		sockaddr_in &infrom = *reinterpret_cast<sockaddr_in *>(from);
+		int32_t len = Hook_recvfrom(s, buf, buflen, flags, from, fromlen);
+		if (len == -1)
+			return -1;
+
+		PacketType type = ClassifyPacket(buf, len, infrom);
+		if (type == PacketTypeInfo && info_detour_enabled)
+			return HandleInfoQuery(infrom);
+
+		if (type == PacketTypePlayer && player_detour_enabled)
+			return HandleInfoQuery(infrom);
+
+		if (type == PacketTypeIgnore)
+			return -1;
+
+		return len;
 	}
 
 	inline int32_t HandleNetError(int32_t value)
@@ -760,59 +574,64 @@ namespace netfilter
 		return value;
 	}
 
-	inline int32_t ReceiveAndAnalyzePacket(
-		int32_t s,
-		char *buf,
-		int32_t buflen,
-		int32_t flags,
-		sockaddr *from,
-		int32_t *fromlen
-		)
-	{
-		sockaddr_in &infrom = *reinterpret_cast<sockaddr_in *>(from);
-		int32_t len = Hook_recvfrom(s, buf, buflen, flags, from, fromlen);
-		if (len == -1)
-			return -1;
-
-		PacketType type = ClassifyPacket(buf, len, infrom);
-		if (type == PacketTypeInfo)
-			type = HandleInfoQuery(infrom);
-
-		if (type == PacketTypePlayer)
-			type = HandlePlayerQuery(infrom);
-
-		if (type == PacketTypeInvalid)
-			return -1;
-
-		return len;
-	}
-
-	static int32_t Hook_recvfrom_d(
-		int32_t s,
-		char *buf,
-		int32_t buflen,
-		int32_t flags,
-		sockaddr *from,
-		int32_t *fromlen
-		)
+	static int32_t Hook_recvfrom_d(int32_t s, char *buf, int32_t buflen, int32_t flags, sockaddr *from, int32_t *fromlen)
 	{
 		return HandleNetError(ReceiveAndAnalyzePacket(s, buf, buflen, flags, from, fromlen));
 	}
 
-	inline void SetDetourStatus(bool enabled)
+	inline void UpdateDetourStatus()
 	{
-		if (enabled)
+		if (info_detour_enabled || player_detour_enabled)
 			VCRHook_recvfrom = Hook_recvfrom_d;
 		else
 			VCRHook_recvfrom = Hook_recvfrom;
 	}
 
-
 	LUA_FUNCTION_STATIC(EnableInfoDetour)
 	{
 		LUA->CheckType(1, GarrysMod::Lua::Type::BOOL);
-		bool info_detour_enabled = LUA->GetBool(1);
-		SetDetourStatus(info_detour_enabled);
+		info_detour_enabled = LUA->GetBool(1);
+		UpdateDetourStatus();
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(EnablePlayerDetour)
+	{
+		LUA->CheckType(1, GarrysMod::Lua::Type::BOOL);
+		player_detour_enabled = LUA->GetBool(1);
+		UpdateDetourStatus();
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(MaxInfoRequests)
+	{
+		LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER);
+		info_max_requests = LUA->GetNumber(1);
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(MaxPlayerRequests)
+	{
+		LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER);
+		player_max_requests = LUA->GetNumber(1);
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetServerName)
+	{
+		if (LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultGameName = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.gameName = LUA->GetString(1);
+			reply_info_real.defaultGameName = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
 		return 0;
 	}
 
@@ -913,6 +732,18 @@ namespace netfilter
 
 		LUA->PushCFunction(EnableInfoDetour);
 		LUA->SetField(-2, "EnableInfoDetour");
+
+		LUA->PushCFunction(EnablePlayerDetour);
+		LUA->SetField(-2, "EnablePlayerDetour");
+
+		LUA->PushCFunction(MaxInfoRequests);
+		LUA->SetField(-2, "MaxInfoRequests");
+
+		LUA->PushCFunction(MaxPlayerRequests);
+		LUA->SetField(-2, "MaxPlayerRequests");
+
+		LUA->PushCFunction(SetServerName);
+		LUA->SetField(-2, "SetServerName");
 	}
 
 	void Deinitialize(lua_State *)
