@@ -1,24 +1,11 @@
 #include <netfilter.hpp>
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <set>
 #include <queue>
-#include <string>
 #include <eiface.h>
 #include <filesystem_stdio.h>
 #include <iserver.h>
-#include <iclient.h>
-#include <inetchannel.h>
-#include <inetchannelinfo.h>
-#include "cdll_int.h"
-#include <threadtools.h>
-#include <utlvector.h>
-#include <bitbuf.h>
-#include <steam/steamclientpublic.h>
 #include <steam/steam_gameserver.h>
-#include <GarrysMod/Interfaces.hpp>
 #include <symbolfinder.hpp>
 #include <game/server/iplayerinfo.h>
 
