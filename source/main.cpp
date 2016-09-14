@@ -35,11 +35,11 @@ namespace global
 
 		LUA->CreateTable( );
 
-		LUA->PushString( "Query 0.1" );
+		LUA->PushString( "Query 1.0" );
 		LUA->SetField( -2, "Version" );
 
 		// version num follows LuaJIT style, xxyyzz
-		LUA->PushNumber( 000001 );
+		LUA->PushNumber( 010000 );
 		LUA->SetField( -2, "VersionNum" );
 	}
 
