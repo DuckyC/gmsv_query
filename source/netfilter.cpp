@@ -1,4 +1,4 @@
-#include <netfilter_old.hpp>
+#include <netfilter.hpp>
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
 #include <stdint.h>
@@ -21,6 +21,9 @@
 #include <GarrysMod/Interfaces.hpp>
 #include <symbolfinder.hpp>
 #include <game/server/iplayerinfo.h>
+
+#define max(a,b)            (((a) > (b)) ? (a) : (b))
+#define min(a,b)            (((a) < (b)) ? (a) : (b))
 
 #if defined _WIN32
 
@@ -127,7 +130,6 @@ namespace netfilter
 
 	struct reply_player_t
 	{
-		bool sendDefault;
 		byte count;
 		std::vector<player_t> players;
 	};
@@ -439,7 +441,7 @@ namespace netfilter
 
 			return PacketTypeGood;
 		}
-		
+
 		lua->Pop(1);
 		return PacketTypeGood;
 	}
@@ -476,12 +478,10 @@ namespace netfilter
 		if (type != PacketTypeFake)
 			return type;
 
-		if (reply_player.sendDefault)
-			return PacketTypeGood;
-
 		if (player_packet_old)
 			BuildPlayerPacket();
 
+		
 		sendto(
 			game_socket,
 			reinterpret_cast<char *>(player_cache_packet.GetData()),
@@ -549,7 +549,7 @@ namespace netfilter
 			return HandleInfoQuery(infrom);
 
 		if (type == PacketTypePlayer && player_detour_enabled)
-			return HandleInfoQuery(infrom);
+			return  HandlePlayerQuery(infrom);
 
 		if (type == PacketTypeIgnore)
 			return -1;
@@ -595,14 +595,6 @@ namespace netfilter
 		return 0;
 	}
 
-	LUA_FUNCTION_STATIC(EnablePlayerDetour)
-	{
-		LUA->CheckType(1, GarrysMod::Lua::Type::BOOL);
-		player_detour_enabled = LUA->GetBool(1);
-		UpdateDetourStatus();
-		return 0;
-	}
-
 	LUA_FUNCTION_STATIC(MaxInfoRequests)
 	{
 		LUA->CheckType(1, GarrysMod::Lua::Type::NUMBER);
@@ -619,7 +611,7 @@ namespace netfilter
 
 	LUA_FUNCTION_STATIC(SetServerName)
 	{
-		if (LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
 		{
 			reply_info_real.defaultGameName = true;
 			info_packet_old = true;
@@ -632,6 +624,330 @@ namespace netfilter
 			return 0;
 		}
 		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetMapName)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultMapName = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.mapName = LUA->GetString(1);
+			reply_info_real.defaultMapName = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetFolderName)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultGameDir = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.gameDir = LUA->GetString(1);
+			reply_info_real.defaultGameDir = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetGamemodeName)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultGamemodeName = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.gamemodeName = LUA->GetString(1);
+			reply_info_real.defaultGamemodeName = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetAmountPlayers)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultAmtClients = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::NUMBER)) {
+			reply_info_fake.amtClients = max(0, min(LUA->GetNumber(1), 255));
+			reply_info_real.defaultAmtClients = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or number");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetMaxPlayers)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultMaxClients = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::NUMBER)) {
+			reply_info_fake.maxClients = max(0, min(LUA->GetNumber(1), 255));
+			reply_info_real.defaultMaxClients = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or number");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetAmountBots)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultAmtBots = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::NUMBER)) {
+			reply_info_fake.amtBots = max(0, min(LUA->GetNumber(1), 255));
+			reply_info_real.defaultAmtBots = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or number");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetServerType)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultServerType = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.serverType = LUA->GetString(1)[0];
+			reply_info_real.defaultServerType = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetOSType)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultOSType = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.OSType = LUA->GetString(1)[0];
+			reply_info_real.defaultOSType = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetPassworded)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultPassworded = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::BOOL)) {
+			reply_info_fake.passworded = LUA->GetBool(1);
+			reply_info_real.defaultPassworded = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or bool");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetVACEnabled)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultSecure = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::BOOL)) {
+			reply_info_fake.secure = LUA->GetBool(1);
+			reply_info_real.defaultSecure = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or bool");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetGameVersion)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultGameVersion = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.gameVersion = LUA->GetString(1);
+			reply_info_real.defaultGameVersion = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetGamePort)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultUDPPort = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::NUMBER)) {
+			reply_info_fake.UDPPort = LUA->GetNumber(1);
+			reply_info_real.defaultUDPPort = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or number");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetTags)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultTags = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.tags = LUA->GetString(1);
+			reply_info_real.defaultTags = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetAppID)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultAppid = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::NUMBER)) {
+			reply_info_fake.appid = LUA->GetNumber(1);
+			reply_info_real.defaultAppid = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or number");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetSteamID)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			reply_info_real.defaultSteamid = true;
+			info_packet_old = true;
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::STRING)) {
+			reply_info_fake.steamid = _strtoui64(LUA->GetString(1), 0, 10);
+			reply_info_real.defaultSteamid = false;
+			info_packet_old = true;
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or string");
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC(SetPlayerInfo)
+	{
+		if (LUA->Top() == 0 || LUA->IsType(1, GarrysMod::Lua::Type::NIL))
+		{
+			player_detour_enabled = false;
+			UpdateDetourStatus();
+			return 0;
+		}
+		else if (LUA->IsType(1, GarrysMod::Lua::Type::TABLE)) {
+
+			reply_player_t newreply;
+
+			int count = lua->ObjLen(1);
+			newreply.count = count;
+			std::vector<player_t> newPlayers(count);
+
+			for (int i = 0; i < count; i++)
+			{
+				player_t newPlayer;
+				newPlayer.index = i;
+
+				lua->PushNumber(i + 1);
+				lua->GetTable(-2);
+
+				lua->GetField(-1, "name");
+				newPlayer.name = lua->GetString(-1);
+				lua->Pop(1);
+
+				lua->GetField(-1, "score");
+				newPlayer.score = lua->GetNumber(-1);
+				lua->Pop(1);
+
+				lua->GetField(-1, "time");
+				newPlayer.time = lua->GetNumber(-1);
+				lua->Pop(1);
+
+				lua->Pop(1);
+				newPlayers.at(i) = newPlayer;
+			}
+
+			newreply.players = newPlayers;
+			lua->Pop(1);
+
+			reply_player = newreply;
+
+			player_detour_enabled = true;
+			player_packet_old = true;
+			UpdateDetourStatus();
+			return 0;
+		}
+		LUA->ArgError(1, "Argument must be nil or table");
 		return 0;
 	}
 
@@ -733,9 +1049,6 @@ namespace netfilter
 		LUA->PushCFunction(EnableInfoDetour);
 		LUA->SetField(-2, "EnableInfoDetour");
 
-		LUA->PushCFunction(EnablePlayerDetour);
-		LUA->SetField(-2, "EnablePlayerDetour");
-
 		LUA->PushCFunction(MaxInfoRequests);
 		LUA->SetField(-2, "MaxInfoRequests");
 
@@ -744,6 +1057,54 @@ namespace netfilter
 
 		LUA->PushCFunction(SetServerName);
 		LUA->SetField(-2, "SetServerName");
+
+		LUA->PushCFunction(SetMapName);
+		LUA->SetField(-2, "SetMapName");
+
+		LUA->PushCFunction(SetFolderName);
+		LUA->SetField(-2, "SetFolderName");
+
+		LUA->PushCFunction(SetGamemodeName);
+		LUA->SetField(-2, "SetGamemodeName");
+
+		LUA->PushCFunction(SetAmountPlayers);
+		LUA->SetField(-2, "SetAmountPlayers");
+
+		LUA->PushCFunction(SetMaxPlayers);
+		LUA->SetField(-2, "SetMaxPlayers");
+
+		LUA->PushCFunction(SetAmountBots);
+		LUA->SetField(-2, "SetAmountBots");
+
+		LUA->PushCFunction(SetServerType);
+		LUA->SetField(-2, "SetServerType");
+
+		LUA->PushCFunction(SetOSType);
+		LUA->SetField(-2, "SetOSType");
+
+		LUA->PushCFunction(SetPassworded);
+		LUA->SetField(-2, "SetPassworded");
+
+		LUA->PushCFunction(SetVACEnabled);
+		LUA->SetField(-2, "SetVACEnabled");
+
+		LUA->PushCFunction(SetGameVersion);
+		LUA->SetField(-2, "SetGameVersion");
+
+		LUA->PushCFunction(SetGamePort);
+		LUA->SetField(-2, "SetGamePort");
+
+		LUA->PushCFunction(SetTags);
+		LUA->SetField(-2, "SetTags");
+
+		LUA->PushCFunction(SetAppID);
+		LUA->SetField(-2, "SetAppID");
+
+		LUA->PushCFunction(SetSteamID);
+		LUA->SetField(-2, "SetSteamID");
+
+		LUA->PushCFunction(SetPlayerInfo);
+		LUA->SetField(-2, "SetPlayerInfo");
 	}
 
 	void Deinitialize(lua_State *)
