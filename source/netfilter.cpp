@@ -165,8 +165,7 @@ namespace netfilter
 
 	typedef CUtlVector<netsocket_t> netsockets_t;
 
-#if defined _WIN32
-
+#if defined SYSTEM_WINDOWS
 	static const char FileSystemFactory_sym[] = "\x55\x8B\xEC\x68\x2A\x2A\x2A\x2A\xFF\x75\x08\xE8";
 	static const size_t FileSystemFactory_symlen = sizeof(FileSystemFactory_sym) - 1;
 
@@ -181,7 +180,7 @@ namespace netfilter
 
 	static const char operating_system_char = 'w';
 
-#elif defined __linux
+#elif defined SYSTEM_POSIX
 
 	static const char FileSystemFactory_sym[] = "@_Z17FileSystemFactoryPKcPi";
 	static const size_t FileSystemFactory_symlen = 0;
@@ -194,25 +193,12 @@ namespace netfilter
 
 	static const char IServer_sig[] = "@sv";
 	static const size_t IServer_siglen = sizeof(IServer_sig) - 1;
+#endif
 
+#if defined SYSTEM_LINUX
 	static const char operating_system_char = 'l';
-
-#elif defined __APPLE__
-
-	static const char FileSystemFactory_sym[] = "@_Z17FileSystemFactoryPKcPi";
-	static const size_t FileSystemFactory_symlen = 0;
-
-	static const char g_pFullFileSystem_sym[] = "@g_pFullFileSystem";
-	static const size_t g_pFullFileSystem_symlen = 0;
-
-	static const char net_sockets_sig[] = "@_ZL11net_sockets";
-	static const size_t net_sockets_siglen = 0;
-
-	static const char IServer_sig[] = "@sv";
-	static const size_t IServer_siglen = sizeof(IServer_sig) - 1;
-
+#elif defined SYSTEM_MACOSX
 	static const char operating_system_char = 'm';
-
 #endif
 
 	static std::string dedicated_binary = Helpers::GetBinaryFileName("dedicated", false, true, "bin/");
@@ -750,11 +736,11 @@ namespace netfilter
 	{
 		if (value == -1)
 
-#if defined _WIN32
+#if defined SYSTEM_WINDOWS
 
 			WSASetLastError(WSAEWOULDBLOCK);
 
-#elif defined __linux || defined __APPLE__
+#elif defined SYSTEM_POSIX
 
 			errno = EWOULDBLOCK;
 
@@ -865,7 +851,7 @@ namespace netfilter
 		if (filesystem == nullptr)
 			LUA->ThrowError("failed to initialize IFileSystem");
 
-#if defined __linux || defined __APPLE__
+#if defined SYSTEM_POSIX
 
 		server = reinterpret_cast<IServer *>(symfinder.ResolveOnBinary(
 			global::engine_lib.c_str(),
@@ -886,7 +872,7 @@ namespace netfilter
 		if (server == nullptr)
 			LUA->ThrowError("failed to locate IServer");
 
-#if defined __linux || defined __APPLE__
+#if defined SYSTEM_POSIX
 
 		netsockets_t *net_sockets = reinterpret_cast<netsockets_t *>(symfinder.ResolveOnBinary(
 			global::engine_lib.c_str(),
@@ -921,5 +907,4 @@ namespace netfilter
 	{
 		VCRHook_recvfrom = Hook_recvfrom;
 	}
-
 }

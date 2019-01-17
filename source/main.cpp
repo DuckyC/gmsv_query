@@ -2,11 +2,7 @@
 #include <netfilter.hpp>
 #include <GarrysMod/Lua/Interface.h>
 
-#if defined __linux && (__GNUC__ != 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 4))
-
-#error The only supported compilation platforms for this project on Linux are GCC 4.4 to 4.9 (for ABI reasons).
-
-#elif defined __APPLE__
+#if defined __APPLE__
 
 #include <AvailabilityMacros.h>
 
@@ -31,7 +27,7 @@ namespace global
 
 		LUA->CreateTable( );
 
-		LUA->PushString( "Query 1.0" );
+		LUA->PushString( "Query 1.1" );
 		LUA->SetField( -2, "Version" );
 
 		// version num follows LuaJIT style, xxyyzz
