@@ -2,7 +2,7 @@
 #include <netfilter.hpp>
 #include <GarrysMod/Lua/Interface.h>
 
-#if defined _WIN32 && _MSC_VER != 1600
+#if defined _WIN32 && _MSC_VER == 1600
 
 #error The only supported compilation platform for this project on Windows is Visual Studio 2010 (for ABI reasons).
 
@@ -26,9 +26,9 @@ namespace global
 {
 
 	SourceSDK::FactoryLoader engine_loader( "engine", false, true, "bin/" );
-	std::string engine_lib = helpers::GetBinaryFileName( "engine", false, true, "bin/" );
+	std::string engine_lib = Helpers::GetBinaryFileName( "engine", false, true, "bin/" );
 
-	static void PreInitialize( lua_State *state )
+	static void PreInitialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
 		if( !engine_loader.IsValid( ) )
 			LUA->ThrowError( "unable to get engine factory" );
@@ -43,12 +43,12 @@ namespace global
 		LUA->SetField( -2, "VersionNum" );
 	}
 
-	static void Initialize( lua_State *state )
+	static void Initialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
 		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "query" );
 	}
 
-	static void Deinitialize( lua_State *state )
+	static void Deinitialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
 		LUA->PushNil( );
 		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "query" );
@@ -58,15 +58,15 @@ namespace global
 
 GMOD_MODULE_OPEN( )
 {
-	global::PreInitialize( state );
-	netfilter::Initialize( state );
-	global::Initialize( state );
+	global::PreInitialize( LUA );
+	netfilter::Initialize( LUA );
+	global::Initialize( LUA );
 	return 1;
 }
 
 GMOD_MODULE_CLOSE( )
 {
-	netfilter::Deinitialize( state );
-	global::Deinitialize( state );
+	netfilter::Deinitialize( LUA );
+	global::Deinitialize( LUA );
 	return 0;
 }

@@ -1,6 +1,9 @@
 #include <netfilter.hpp>
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
+#include <GarrysMod/Lua/LuaInterface.h>
+#include <GarrysMod/Lua/LuaShared.h>
+#include <GarrysMod/Interfaces.hpp>
 #include <stdint.h>
 #include <stddef.h>
 #include <set>
@@ -18,7 +21,6 @@
 #include <bitbuf.h>
 #include <steam/steamclientpublic.h>
 #include <steam/steam_gameserver.h>
-#include <GarrysMod/Interfaces.hpp>
 #include <symbolfinder.hpp>
 #include <game/server/iplayerinfo.h>
 
@@ -165,7 +167,7 @@ namespace netfilter
 
 #if defined _WIN32
 
-	static const char FileSystemFactory_sym[] = "\x55\x8B\xEC\x56\x8B\x75\x08\x68\x2A\x2A\x2A\x2A\x56\xE8";
+	static const char FileSystemFactory_sym[] = "\x55\x8B\xEC\x68\x2A\x2A\x2A\x2A\xFF\x75\x08\xE8";
 	static const size_t FileSystemFactory_symlen = sizeof(FileSystemFactory_sym) - 1;
 
 	static const char g_pFullFileSystem_sym[] = "@g_pFullFileSystem";
@@ -213,13 +215,13 @@ namespace netfilter
 
 #endif
 
-	static std::string dedicated_binary = helpers::GetBinaryFileName("dedicated", false, true, "bin/");
+	static std::string dedicated_binary = Helpers::GetBinaryFileName("dedicated", false, true, "bin/");
 	static SourceSDK::FactoryLoader server_loader("server", false, true, "garrysmod/bin/");
 
 	static Hook_recvfrom_t Hook_recvfrom = VCRHook_recvfrom;
 	static int32_t game_socket = -1;
 
-	static const char *default_game_version = "16.02.26";
+	static const char *default_game_version = "18.12.05"; // 16.12.01
 	static const uint8_t default_proto_version = 17;
 	static bool info_cache_enabled = true;
 	static reply_info_t reply_info;
@@ -540,7 +542,7 @@ namespace netfilter
 
 	inline PacketType SendInfoCache(const sockaddr_in &from, uint32_t time)
 	{
-		//if (time - info_cache_last_update >= info_cache_time)
+		if (time - info_cache_last_update >= info_cache_time)
 		{
 			UpdateReplyInfo();
 			info_cache_last_update = time;
@@ -812,24 +814,23 @@ namespace netfilter
 	LUA_FUNCTION_STATIC(EnableInfoDetour)
 	{
 		LUA->CheckType(1, GarrysMod::Lua::Type::BOOL);
-		bool info_detour_enabled = LUA->GetBool(1);
-		SetDetourStatus(info_detour_enabled);
+		SetDetourStatus(LUA->GetBool(1));
 		return 0;
 	}
 
-	void Initialize(lua_State *state)
+	void Initialize(GarrysMod::Lua::ILuaBase *LUA)
 	{
-		lua = static_cast<GarrysMod::Lua::ILuaInterface *>(LUA);
+		auto lua = static_cast<GarrysMod::Lua::ILuaInterface *>(LUA);
 
 		if (!server_loader.IsValid())
 			LUA->ThrowError("unable to get server factory");
 
-		gamedll = server_loader.GetInterface<IServerGameDLL>(INTERFACEVERSION_SERVERGAMEDLL_VERSION_9);
+		gamedll = server_loader.GetInterface<IServerGameDLL>(INTERFACEVERSION_SERVERGAMEDLL);
 		if (gamedll == nullptr)
 			LUA->ThrowError("failed to load required IServerGameDLL interface");
 
 		engine_server = global::engine_loader.GetInterface<IVEngineServer>(
-			INTERFACEVERSION_VENGINESERVER_VERSION_21
+			INTERFACEVERSION_VENGINESERVER
 			);
 		if (engine_server == nullptr)
 			LUA->ThrowError("failed to load required IVEngineServer interface");
@@ -916,7 +917,7 @@ namespace netfilter
 		LUA->SetField(-2, "EnableInfoDetour");
 	}
 
-	void Deinitialize(lua_State *)
+	void Deinitialize(GarrysMod::Lua::ILuaBase *)
 	{
 		VCRHook_recvfrom = Hook_recvfrom;
 	}
