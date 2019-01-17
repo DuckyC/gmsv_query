@@ -2,11 +2,7 @@
 #include <netfilter.hpp>
 #include <GarrysMod/Lua/Interface.h>
 
-#if defined _WIN32 && _MSC_VER == 1600
-
-#error The only supported compilation platform for this project on Windows is Visual Studio 2010 (for ABI reasons).
-
-#elif defined __linux && (__GNUC__ != 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 4))
+#if defined __linux && (__GNUC__ != 4 || (__GNUC__ == 4 && __GNUC_MINOR__ < 4))
 
 #error The only supported compilation platforms for this project on Linux are GCC 4.4 to 4.9 (for ABI reasons).
 

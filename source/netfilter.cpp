@@ -820,7 +820,7 @@ namespace netfilter
 
 	void Initialize(GarrysMod::Lua::ILuaBase *LUA)
 	{
-		auto lua = static_cast<GarrysMod::Lua::ILuaInterface *>(LUA);
+		lua = static_cast<GarrysMod::Lua::ILuaInterface *>(LUA);
 
 		if (!server_loader.IsValid())
 			LUA->ThrowError("unable to get server factory");
