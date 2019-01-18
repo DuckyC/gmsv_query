@@ -1,11 +1,19 @@
 #pragma once
 
-struct lua_State;
+#include <stdint.h>
+#include <sstream>
+
+namespace GarrysMod
+{
+	namespace Lua
+	{
+		class ILuaBase;
+		class ILuaInterface;
+	}
+}
 
 namespace netfilter
 {
-
-void Initialize( lua_State *state );
-void Deinitialize( lua_State *state );
-
+	void Initialize( GarrysMod::Lua::ILuaBase *LUA );
+	void Deinitialize( GarrysMod::Lua::ILuaBase *LUA );
 }
