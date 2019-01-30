@@ -2,7 +2,6 @@
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
 #include <GarrysMod/Lua/LuaInterface.h>
-#include <GarrysMod/Lua/LuaShared.h>
 #include <GarrysMod/Interfaces.hpp>
 #include <stdint.h>
 #include <stddef.h>
@@ -19,7 +18,6 @@
 #include <threadtools.h>
 #include <utlvector.h>
 #include <bitbuf.h>
-#include <steam/steamclientpublic.h>
 #include <steam/steam_gameserver.h>
 #include <symbolfinder.hpp>
 #include <game/server/iplayerinfo.h>
@@ -162,10 +160,27 @@ namespace netfilter
 		PacketTypeInfo,
 		PacketTypePlayer,
 	};
+	
+	class CSteamGameServerAPIContext
+	{
+	public:
+		ISteamClient *m_pSteamClient;
+		ISteamGameServer *m_pSteamGameServer;
+		ISteamUtils *m_pSteamGameServerUtils;
+		ISteamNetworking *m_pSteamGameServerNetworking;
+		ISteamGameServerStats *m_pSteamGameServerStats;
+		ISteamHTTP *m_pSteamHTTP;
+		ISteamInventory *m_pSteamInventory;
+		ISteamUGC *m_pSteamUGC;
+		ISteamApps *m_pSteamApps;
+	};
 
 	typedef CUtlVector<netsocket_t> netsockets_t;
 
 #if defined SYSTEM_WINDOWS
+	static const char SteamGameServerAPIContext_sym[] = "\x2A\x2A\x2A\x2A\xE8\x2A\x2A\x2A\x2A\x6A\x00\x68\x2A\x2A\x2A\x2A\xFF\x55\x08\x83\xC4\x08\xA3";
+	static const size_t SteamGameServerAPIContext_symlen = sizeof(SteamGameServerAPIContext_sym) - 1;
+		
 	static const char FileSystemFactory_sym[] = "\x55\x8B\xEC\x68\x2A\x2A\x2A\x2A\xFF\x75\x08\xE8";
 	static const size_t FileSystemFactory_symlen = sizeof(FileSystemFactory_sym) - 1;
 
@@ -181,6 +196,8 @@ namespace netfilter
 	static const char operating_system_char = 'w';
 
 #elif defined SYSTEM_POSIX
+	static const char SteamGameServerAPIContext_sym[] = "@_ZL27s_SteamGameServerAPIContext";
+	static const size_t SteamGameServerAPIContext_symlen = 0;
 
 	static const char FileSystemFactory_sym[] = "@_Z17FileSystemFactoryPKcPi";
 	static const size_t FileSystemFactory_symlen = 0;
@@ -203,6 +220,9 @@ namespace netfilter
 
 	static std::string dedicated_binary = Helpers::GetBinaryFileName("dedicated", false, true, "bin/");
 	static SourceSDK::FactoryLoader server_loader("server", false, true, "garrysmod/bin/");
+	
+	static std::string server_binary = Helpers::GetBinaryFileName( "server", false, true, "garrysmod/bin/" );
+	static CSteamGameServerAPIContext *gameserver_context = nullptr;
 
 	static Hook_recvfrom_t Hook_recvfrom = VCRHook_recvfrom;
 	static int32_t game_socket = -1;
@@ -243,7 +263,6 @@ namespace netfilter
 		}
 
 		reply_info.max_clients = server->GetMaxClients();
-
 		reply_info.udp_port = server->GetUDPPort();
 
 		{
@@ -294,11 +313,15 @@ namespace netfilter
 	{
 		reply_info.game_name = server->GetName();
 		reply_info.map_name = server->GetMapName();
+		reply_info.gamemode_name = gamedll->GetGameDescription();
 		reply_info.appid = engine_server->GetAppID();
 		reply_info.amt_clients = server->GetNumClients();
 		reply_info.amt_bots = server->GetNumFakeClients();
 		reply_info.passworded = server->GetPassword() != nullptr ? 1 : 0;
-		reply_info.secure = SteamGameServer_BSecure();
+		
+		ISteamGameServer *steamGS = gameserver_context != nullptr ?
+			gameserver_context->m_pSteamGameServer : nullptr;
+		reply_info.secure = steamGS != nullptr ? steamGS->BSecure() : false;
 
 		const CSteamID *sid = engine_server->GetGameServerSteamID();
 		if (sid != nullptr)
@@ -333,29 +356,18 @@ namespace netfilter
 		// if vac protected, it activates itself some time after startup
 		info_cache_packet.WriteByte(info.secure);
 		info_cache_packet.WriteString(info.game_version.c_str());
-
-		if (info.tags.empty())
-		{
-			// 0x80 - port number is present
-			// 0x10 - server steamid is present
-			// 0x01 - game long appid is present
-			info_cache_packet.WriteByte(0x80 | 0x10 | 0x01);
-			info_cache_packet.WriteShort(info.udp_port);
-			info_cache_packet.WriteLongLong(info.steamid);
-			info_cache_packet.WriteLongLong(info.appid);
-		}
-		else
-		{
-			// 0x80 - port number is present
-			// 0x10 - server steamid is present
-			// 0x20 - tags are present
-			// 0x01 - game long appid is present
-			info_cache_packet.WriteByte(0x80 | 0x10 | 0x20 | 0x01);
-			info_cache_packet.WriteShort(info.udp_port);
-			info_cache_packet.WriteLongLong(info.steamid);
+		
+		bool notags = info.tags.empty();
+		// 0x80 - port number is present
+		// 0x10 - server steamid is present
+		// 0x20 - tags are present
+		// 0x01 - game long appid is present
+		info_cache_packet.WriteByte(0x80 | 0x10 | (notags ? 0x00 : 0x20) | 0x01);
+		info_cache_packet.WriteShort(info.udp_port);
+		info_cache_packet.WriteLongLong(info.steamid);
+		if (!notags)
 			info_cache_packet.WriteString(info.tags.c_str());
-			info_cache_packet.WriteLongLong(info.appid);
-		}
+		info_cache_packet.WriteLongLong(info.appid);
 	}
 
 	reply_info_t CallInfoHook(const sockaddr_in &from)
@@ -636,7 +648,7 @@ namespace netfilter
 				player_t newPlayer;
 				newPlayer.index = i;
 
-				lua->PushNumber(i+1);
+				lua->PushNumber(i + 1);
 				lua->GetTable(-2);
 
 				lua->GetField(-1, "name");
@@ -682,8 +694,8 @@ namespace netfilter
 			0,
 			reinterpret_cast<const sockaddr *>(&from),
 			sizeof(from)
-			);
-		//DebugWarning("uhhh: ", );
+		);
+
 		return PacketTypeInvalid; // we've handled it
 	}
 
@@ -695,7 +707,7 @@ namespace netfilter
 				"[Query] Bad OOB! len: %d from %s\n",
 				len,
 				inet_ntoa(from.sin_addr)
-				);
+			);
 			return PacketTypeInvalid;
 		}
 
@@ -710,7 +722,7 @@ namespace netfilter
 				len,
 				channel,
 				inet_ntoa(from.sin_addr)
-				);
+			);
 			return PacketTypeInvalid;
 		}
 
@@ -815,15 +827,11 @@ namespace netfilter
 		if (gamedll == nullptr)
 			LUA->ThrowError("failed to load required IServerGameDLL interface");
 
-		engine_server = global::engine_loader.GetInterface<IVEngineServer>(
-			INTERFACEVERSION_VENGINESERVER
-			);
+		engine_server = global::engine_loader.GetInterface<IVEngineServer>(INTERFACEVERSION_VENGINESERVER);
 		if (engine_server == nullptr)
 			LUA->ThrowError("failed to load required IVEngineServer interface");
 
-		playerinfo = server_loader.GetInterface<IPlayerInfoManager>(
-			INTERFACEVERSION_PLAYERINFOMANAGER
-			);
+		playerinfo = server_loader.GetInterface<IPlayerInfoManager>(INTERFACEVERSION_PLAYERINFOMANAGER);
 		if (playerinfo == nullptr)
 			LUA->ThrowError("failed to load required IPlayerInfoManager interface");
 
@@ -835,13 +843,19 @@ namespace netfilter
 
 		CreateInterfaceFn factory = reinterpret_cast<CreateInterfaceFn>(symfinder.ResolveOnBinary(
 			dedicated_binary.c_str(), FileSystemFactory_sym, FileSystemFactory_symlen
-			));
+		));
 		if (factory == nullptr)
 		{
 			IFileSystem **filesystem_ptr = reinterpret_cast<IFileSystem **>(symfinder.ResolveOnBinary(
 				dedicated_binary.c_str(), g_pFullFileSystem_sym, g_pFullFileSystem_symlen
 				));
-			filesystem = filesystem_ptr != nullptr ? *filesystem_ptr : nullptr;
+			if( filesystem_ptr == nullptr )
+				filesystem_ptr = reinterpret_cast<IFileSystem **>(symfinder.ResolveOnBinary(
+					server_binary.c_str(), g_pFullFileSystem_sym, g_pFullFileSystem_symlen
+				));
+			
+			if( filesystem_ptr != nullptr )
+				filesystem = *filesystem_ptr;
 		}
 		else
 		{
@@ -850,6 +864,28 @@ namespace netfilter
 
 		if (filesystem == nullptr)
 			LUA->ThrowError("failed to initialize IFileSystem");
+		
+#if defined SYSTEM_WINDOWS
+			CSteamGameServerAPIContext **gameserver_context_pointer = reinterpret_cast<CSteamGameServerAPIContext **>(symfinder.ResolveOnBinary(
+				server_binary.c_str(),
+				SteamGameServerAPIContext_sym,
+				SteamGameServerAPIContext_symlen
+			));
+			
+			if(gameserver_context_pointer == nullptr)
+				LUA->ThrowError("Failed to load required CSteamGameServerAPIContext interface pointer.");
+
+			gameserver_context = *gameserver_context_pointer;
+#else
+			gameserver_context = reinterpret_cast<CSteamGameServerAPIContext *>(symfinder.ResolveOnBinary(
+				server_binary.c_str(),
+				SteamGameServerAPIContext_sym,
+				SteamGameServerAPIContext_symlen
+			));
+#endif
+
+		if(gameserver_context == nullptr)
+			LUA->ThrowError("Failed to load required CSteamGameServerAPIContext interface.");
 
 #if defined SYSTEM_POSIX
 
@@ -857,7 +893,7 @@ namespace netfilter
 			global::engine_lib.c_str(),
 			IServer_sig,
 			IServer_siglen
-			));
+		));
 
 #else
 
@@ -865,7 +901,7 @@ namespace netfilter
 			global::engine_lib.c_str(),
 			IServer_sig,
 			IServer_siglen
-			));
+		));
 
 #endif
 
@@ -878,7 +914,7 @@ namespace netfilter
 			global::engine_lib.c_str(),
 			net_sockets_sig,
 			net_sockets_siglen
-			));
+		));
 
 #else
 
@@ -886,7 +922,7 @@ namespace netfilter
 			global::engine_lib.c_str(),
 			net_sockets_sig,
 			net_sockets_siglen
-			));
+		));
 
 #endif
 
